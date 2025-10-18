@@ -84,6 +84,19 @@
   - 内存分配器（设备 + pinned host）；
   - telemetry（错误码、profiling hook）。
 
+#### Registration hook 参考：CANN 后端
+
+复用 CANN 的接入模式可以快速搭建新的后端注册骨架，核心步骤如下（代码位于 `ggml/src/ggml-cann/ggml-cann.cpp` 与 `ggml/src/ggml-backend-reg.cpp`）：
+
+- **全局注册函数**：`ggml_backend_cann_reg()` 使用静态 `ggml_backend_reg`，在首次调用时执行一次 `aclInit(nullptr)`，构造 `ggml_backend_cann_reg_context` 并按设备数量生成 `ggml_backend_device` 对象。
+- **设备接口**：每个 `ggml_backend_device` 携带 `ggml_backend_cann_device_interface`，提供 `init_backend`、`get_buffer_type`、`supports_op`、事件管理等回调；设备上下文保存 `device id`、`name`（如 `CANN0`）、`description`。
+- **缓冲类型绑定**：通过 `ggml_backend_cann_device_get_buffer_type()` 和 `ggml_backend_cann_supports_buft()`，确保 backend 与 buffer type 的 device id 匹配，避免跨设备误用。
+- **宿主缓存支持**：`ggml_backend_cann_device_get_host_buffer_type()` 返回 pinned host buffer，供 CPU 与 NPU 间快速搬运。
+- **静态注册点**：在 `ggml-backend-reg.cpp` 中，通过 `#ifdef GGML_USE_CANN` 调用 `register_backend(ggml_backend_cann_reg());`，确保编译启用后自动把 CANN 设备注入全局 registry。
+- **动态加载钩子**：文件末尾的 `GGML_BACKEND_DL_IMPL(ggml_backend_cann_reg)` 允许在构建为可分发插件时，通过 `ggml_backend_load()` 动态装载。
+
+NPU 后端可沿用该结构：替换底层 SDK 初始化、设备遍历和上下文对象，即可完成注册钩子的最小闭环。
+
 ### 缓冲区与内存策略
 
 - **权重缓冲区**：实现 `ggml_backend_buffer_type`，将模型权重直接映射到 NPU 设备内存或统一内存；考虑按张量对齐（依据 SDK 要求，常见为 64/256 byte）。
@@ -203,4 +216,3 @@
 - 在 `docs/development` 目录新增 `HOWTO-npu-backend.md`，记录开发者接口、调试技巧；
 - 为内部团队构建 demo 与 benchmark 报告（含对比 CPU/CUDA/Vulkan）；
 - 后续可评估将优化贡献 upstream，以减少长期维护成本。
-
